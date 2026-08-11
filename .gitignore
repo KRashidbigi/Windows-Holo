@@ -1,0 +1,20 @@
+# --- Windows System Files ---
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Code Editors & IDEs ---
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# --- User Custom Configurations ---
+*.local
+config.private.json
+
+# --- Log Files ---
+*.log
