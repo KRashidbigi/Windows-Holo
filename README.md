@@ -1,6 +1,6 @@
 # Windows Holo
 
-[![Port of JustinGamer191/Holo](https://shields.io)](https://github.com)
+[![ Unofficial port of JustinGamer191/Holo](https://shields.io)](https://github.com)
 
 A universal, ultra-lightweight, zero-dependency acoustic tap-tracking utility built for **all Windows 10 and 11 laptops** (supporting both **x64** and **ARM64** architectures). 
 
