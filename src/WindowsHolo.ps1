@@ -2,7 +2,7 @@ $SampleRate = 44100
 $DurationMs = 40                                # FASTER: Shorter slice to minimize blind spots
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-$RawVolumeThreshold = 2000                      
+$RawVolumeThreshold = 2700                      
 $DoubleTapWindowMs = 400                        # SLIGHTLY WIDER: Gives a bit more room for the second hit
                     
 
