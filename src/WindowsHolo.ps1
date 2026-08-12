@@ -1,10 +1,5 @@
 # ==================================================================================
-# WINDOWS HOLO ENGINE (Universal Windows Port)
-# ==================================================================================
-# Core concept, logic flow, and zone layouts adapted from the macOS project 'Holo'
-# Original Creator: JustinGamer191 (https://github.com)
-# Compatible with both x64 and ARM64 Windows 10/11 architectures.
-# Safe memory management patch applied.
+# WINDOWS HOLO ENGINE (Universal Windows Port - Fixed Scope & Types)
 # ==================================================================================
 
 # --- CONFIGURATION ---
@@ -12,7 +7,7 @@ $SampleRate = 44100
 $DurationMs = 150                               
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-$Threshold = 1200                                # Lowered slightly for universal compatibility
+$Threshold = 1200                                
 $NumCalibrationTaps = 5                         
 
 $Zones = @{
@@ -29,45 +24,55 @@ function Trigger-Action([int]$zoneId) {
     
     switch ($zoneId) {
         1 { $wsh.SendKeys([char]175) }                  # Upper Left: Vol Up
-        2 { Start-Process "msteams:" }                  # Upper Right: Microsoft Teams
+        2 { Start-Process "msteams:" -ErrorAction SilentlyContinue } # Upper Right: Microsoft Teams
         3 { $wsh.SendKeys([char]174) }                  # Lower Left: Vol Down
         4 { 
-            # Lower Right: VS Code (Checks local user path first, then global fallback)
             $vsCodePath = "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe"
             if (Test-Path $vsCodePath) { Start-Process $vsCodePath } else { Start-Process "code" -ErrorAction SilentlyContinue }
         }
     }
 }
 
-# --- NATIVE WINDOWS AUDIO RECORDING API ---
-$Signatures = @'
-[DllImport("winmm.dll")] public static extern int waveInOpen(out IntPtr phwi, uint uDeviceID, ref WAVEFORMATEX pwfx, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
-[DllImport("winmm.dll")] public static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
-[DllImport("winmm.dll")] public static extern int waveInAddBuffer(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
-[DllImport("winmm.dll")] public static extern int waveInStart(IntPtr hwi);
-[DllImport("winmm.dll")] public static extern int waveInStop(IntPtr hwi);
-[DllImport("winmm.dll")] public static extern int waveInReset(IntPtr hwi);
-[DllImport("winmm.dll")] public static extern int waveInClose(IntPtr hwi);
-[StructLayout(LayoutKind.Sequential)] public struct WAVEFORMATEX { public ushort wFormatTag; public ushort nChannels; public uint nSamplesPerSec; public uint nAvgBytesPerSec; public ushort nBlockAlign; public ushort wBitsPerSample; public ushort cbSize; }
-[StructLayout(LayoutKind.Sequential)] public struct WAVEHDR { public IntPtr lpData; public uint dwBufferLength; public uint dwBytesRecorded; public IntPtr dwUser; public uint dwFlags; public uint dwLoops; public IntPtr lpNext; public IntPtr reserved; }
+# --- ERROR-PROOF NATIVE WINDOWS AUDIO RECORDING API ---
+try {
+    # Check if the type already exists by trying to access its assembly
+    [NativeAudio.WinMM] | Out-Null
+} catch {
+    # If it fails, compile it now
+    $Signatures = @'
+    [DllImport("winmm.dll")] public static extern int waveInOpen(out IntPtr phwi, uint uDeviceID, ref WAVEFORMATEX pwfx, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
+    [DllImport("winmm.dll")] public static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+    [DllImport("winmm.dll")] public static extern int waveInAddBuffer(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+    [DllImport("winmm.dll")] public static extern int waveInStart(IntPtr hwi);
+    [DllImport("winmm.dll")] public static extern int waveInStop(IntPtr hwi);
+    [DllImport("winmm.dll")] public static extern int waveInReset(IntPtr hwi);
+    [DllImport("winmm.dll")] public static extern int waveInClose(IntPtr hwi);
+    [StructLayout(LayoutKind.Sequential)] public struct WAVEFORMATEX { public ushort wFormatTag; public ushort nChannels; public uint nSamplesPerSec; public uint nAvgBytesPerSec; public ushort nBlockAlign; public ushort wBitsPerSample; public ushort cbSize; }
+    [StructLayout(LayoutKind.Sequential)] public struct WAVEHDR { public IntPtr lpData; public uint dwBufferLength; public uint dwBytesRecorded; public IntPtr dwUser; public uint dwFlags; public uint dwLoops; public IntPtr lpNext; public IntPtr reserved; }
 '@
-$WinMM = Add-Type -MemberDefinition $Signatures -Name "WinMM" -Namespace "NativeAudio" -PassThru
+    Add-Type -MemberDefinition $Signatures -Name "WinMM" -Namespace "NativeAudio" | Out-Null
+}
 
-$wfx = New-Object NativeAudio.WAVEFORMATEX
-$wfx.wFormatTag = 1 
-$wfx.nChannels = 1
-$wfx.nSamplesPerSec = $SampleRate
-$wfx.wBitsPerSample = 16
-$wfx.nBlockAlign = 2
-$wfx.nAvgBytesPerSec = $SampleRate * 2
-$wfx.cbSize = 0
+# Define the format structure globally
+$script:wfx = New-Object NativeAudio.WAVEFORMATEX
+$script:wfx.wFormatTag = 1 
+$script:wfx.nChannels = 1
+$script:wfx.nSamplesPerSec = $SampleRate
+$script:wfx.wBitsPerSample = 16
+$script:wfx.nBlockAlign = 2
+$script:wfx.nAvgBytesPerSec = $SampleRate * 2
+$script:wfx.cbSize = 0
 
 # --- AUDIO FEATURE EXTRACTION ---
 function Get-TapProfile {
     $hWaveIn = [IntPtr]::Zero
-    if ($WinMM::waveInOpen([ref]$hWaveIn, 0, [ref]$wfx, [IntPtr]::Zero, [IntPtr]::Zero, 0) -ne 0) { return $null }
     
-    # Allocate unmanaged system memory buffer
+    # Use script-level scope for the audio format reference
+    if ([NativeAudio.WinMM]::waveInOpen([ref]$hWaveIn, 0, [ref]$script:wfx, [IntPtr]::Zero, [IntPtr]::Zero, 0) -ne 0) { 
+        Write-Error "Could not access native microphone device."
+        return $null 
+    }
+    
     $hBuffer = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($BufferSize)
     
     try {
@@ -76,18 +81,18 @@ function Get-TapProfile {
         $whdr.dwBufferLength = $BufferSize
         $whdr.dwFlags = 0
         
-        $WinMM::waveInPrepareHeader($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
-        $WinMM::waveInAddBuffer($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
+        [NativeAudio.WinMM]::waveInPrepareHeader($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
+        [NativeAudio.WinMM]::waveInAddBuffer($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
         
-        $WinMM::waveInStart($hWaveIn) | Out-Null
+        [NativeAudio.WinMM]::waveInStart($hWaveIn) | Out-Null
         Start-Sleep -Milliseconds $DurationMs
-        $WinMM::waveInStop($hWaveIn) | Out-Null
+        [NativeAudio.WinMM]::waveInStop($hWaveIn) | Out-Null
         
         $managedBuffer = New-Object byte[] $BufferSize
         [System.Runtime.InteropServices.Marshal]::Copy($hBuffer, $managedBuffer, 0, $BufferSize)
         
-        $WinMM::waveInReset($hWaveIn) | Out-Null
-        $WinMM::waveInClose($hWaveIn) | Out-Null
+        [NativeAudio.WinMM]::waveInReset($hWaveIn) | Out-Null
+        [NativeAudio.WinMM]::waveInClose($hWaveIn) | Out-Null
         
         $samples = New-Object Int16[] ($BufferSize / 2)
         [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
@@ -98,7 +103,8 @@ function Get-TapProfile {
             $sum = 0
             $count = 0
             for ($j = $i; $j -lt ($i + $chunkSize) -and $j -lt $samples.Length; $j++) {
-                $sum += [Math]::Abs([double]$samples[$j])
+                $val = $samples[$j]
+                if ($val -lt 0) { $sum -= $val } else { $sum += $val }
                 $count++
             }
             $profile.Add($sum / $count)
@@ -115,7 +121,6 @@ function Get-TapProfile {
         return ,$normProfile
     }
     finally {
-        # This block ALWAYS runs, forcing Windows to release the RAM even if a crash happens
         if ($hBuffer -ne [IntPtr]::Zero) {
             [System.Runtime.InteropServices.Marshal]::FreeHGlobal($hBuffer)
         }
@@ -125,6 +130,7 @@ function Get-TapProfile {
 function Listen-ForTap {
     while ($true) {
         $profile = Get-TapProfile
+        if ($null -eq $profile) { Start-Sleep -Milliseconds 500; continue }
         $maxEnergy = 0
         foreach ($val in $profile) { if ($val -gt $maxEnergy) { $maxEnergy = $val } }
         if ($maxEnergy -gt 0.0) { return ,$profile }
@@ -163,6 +169,7 @@ Write-Host "Tap your desk zones to interact. Press Ctrl+C to close script." -For
 
 while ($true) {
     $liveProfile = Listen-ForTap
+    if ($null -eq $liveProfile) { Start-Sleep -Milliseconds 500; continue }
     $bestZone = -1
     $minDistance = [double]::MaxValue
     
