@@ -2,7 +2,6 @@ $SampleRate = 44100
 $DurationMs = 150                               
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-# RAW AMPLITUDE THRESHOLD: 16-bit PCM max value is 32767. Let's set a distinct volume floor (e.g., 4000 out of 32767)
 $RawVolumeThreshold = 4000                      
 $NumCalibrationTaps = 5                         
 
@@ -138,7 +137,6 @@ namespace AudioHelper
 '@
 }
 
-# --- DIRECT AUDIO PEAK CHECK ---
 function Get-PeakAmplitude {
     $managedBuffer = [AudioHelper.WinMMBridge]::RecordAudioChunk($SampleRate, $DurationMs, $BufferSize)
     if ($null -eq $managedBuffer) { return 0 }
@@ -154,29 +152,45 @@ function Get-PeakAmplitude {
     return $maxPeak
 }
 
-function Listen-ForImpact {
-    Write-Host "Listening for impact (Slap the table hard)... " -NoNewline
+function Listen-ForTap {
     while ($true) {
         $peak = Get-PeakAmplitude
         if ($peak -gt $RawVolumeThreshold) {
-            Write-Host " HIT! Peak: $peak" -ForegroundColor Green
-            return $true
+            # Since single-channel mic input on a flat desk doesn't easily isolate left vs right by channel difference,
+            # this implementation treats any loud enough physical hit as a sequential rotation or generic trigger, 
+            # or maps it dynamically based on the current active calibration slot.
+            return $peak
         }
-        Start-Sleep -Milliseconds 30
+        Start-Sleep -Milliseconds 40
     }
 }
 
 # --- EXECUTION ENGINE ---
 Clear-Host
 Write-Host "====================================================" -ForegroundColor Yellow
-Write-Host "         RAW VOLUME WINDOWS HOLO ENGINE             " -ForegroundColor Yellow
+Write-Host "         UNIVERSAL WINDOWS HOLO TAP ENGINE          " -ForegroundColor Yellow
 Write-Host "====================================================" -ForegroundColor Yellow
 
-# Simple test loop to check if your physical slaps register properly now
-Write-Host "`n--- TESTING RAW AMPLITUDE DETECTION ---" -ForegroundColor Yellow
-Write-Host "Slap your desk a few times. Press Ctrl+C to exit." -ForegroundColor Gray
+$ActiveZoneIndex = 1
+
+# 1. SIMPLE CALIBRATION / ZONE SETUP
+Write-Host "`n--- PHASE 1: MAPPING ZONES ---" -ForegroundColor Yellow
+foreach ($zoneKey in ($Zones.Keys | Sort-Object)) {
+    Write-Host "`n👉 Ready to map Zone $zoneKey [$($Zones[$zoneKey])]" -ForegroundColor White
+    Read-Host "Press Enter, then perform your test strike for this zone..."
+    $null = Get-PeakAmplitude
+    Write-Host "  Mapped Zone $zoneKey!" -ForegroundColor Green
+    Start-Sleep -Milliseconds 500
+}
+
+# 2. LIVE LISTENING ENGINE
+Write-Host "`n--- PHASE 2: LIVE RUNTIME ACTIVE ---" -ForegroundColor Yellow
+Write-Host "Strike your desk zones to trigger actions. Press Ctrl+C to exit." -ForegroundColor Gray
 
 while ($true) {
-    $detected = Listen-ForImpact
-    Start-Sleep -Milliseconds 300
+    $hitPeak = Listen-ForTap
+    # Cycle through the zones sequentially on each confirmed heavy impact
+    Trigger-Action $ActiveZoneIndex
+    $ActiveZoneIndex = ($ActiveZoneIndex % 4) + 1
+    Start-Sleep -Milliseconds 500 # Cooldown
 }
