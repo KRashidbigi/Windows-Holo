@@ -2,11 +2,11 @@ $SampleRate = 44100
 $DurationMs = 150                               
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-# TUNED SENSITIVITY: Minimum energy floor required to even consider a sound a "tap"
-$EnergyThreshold = 0.05 
-# TUNED STRICTNESS: Lower = must match the calibration sound profile much more precisely
-$MatchStrictness = 0.20                        
-$NumCalibrationTaps = 5                         
+# INCREASED: Higher number means quiet room noise is completely ignored
+$EnergyThreshold = 0.20 
+# TIGHTER: Lower number means live taps must match your calibration profile strictly
+$MatchStrictness = 0.10                        
+$NumCalibrationTaps = 5                       
 
 $Zones = @{
     1 = "Upper Left (Left Rear)"
