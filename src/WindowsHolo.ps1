@@ -1,27 +1,33 @@
 $SampleRate = 44100
-$DurationMs = 150                               
+$DurationMs = 80                                
 $BytesPerSample = 2                              
-$Channels = 2
-$BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample * $Channels)
-$RawVolumeThreshold = 3000                      
+$BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
+# Adjust this threshold higher or lower depending on how hard you strike your desk
+$RawVolumeThreshold = 3500                      
+$DoubleTapWindowMs = 350                        
 
-$Zones = @{
-    1 = "Left Side Tap (Left Kickstand)"
-    2 = "Right Side Tap (Right Kickstand)"
-}
-
-# --- ACTIONS CONFIGURATION ---
-function Trigger-Action([int]$zoneId) {
-    Write-Host "`n[💥 ACTION] Triggered action for Zone ${zoneId}: $($Zones[$zoneId])" -ForegroundColor Cyan
-    $wsh = New-Object -ComObject WScript.Shell
+# --- LAUNCH ACTIONS ---
+function Invoke-MappedAction([string]$gestureType) {
+    Write-Host "`n[🚀 LAUNCH] Gesture recognized: $gestureType" -ForegroundColor Cyan
     
-    switch ($zoneId) {
-        1 { $wsh.SendKeys([char]174) }                  # Left Side: Vol Down
-        2 { $wsh.SendKeys([char]175) }                  # Right Side: Vol Up
+    switch ($gestureType) {
+        "Teams" {
+            Write-Host "Opening Microsoft Teams..." -ForegroundColor Green
+            Start-Process "msteams:" -ErrorAction SilentlyContinue
+        }
+        "VSCode" {
+            Write-Host "Opening Visual Studio Code..." -ForegroundColor Green
+            $vsCodePath = "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe"
+            if (Test-Path $vsCodePath) { 
+                Start-Process $vsCodePath 
+            } else { 
+                Start-Process "code" -ErrorAction SilentlyContinue 
+            }
+        }
     }
 }
 
-# --- MEMORY-SAFE STEREO AUDIO BRIDGE ---
+# --- MEMORY-SAFE NATIVE AUDIO BRIDGE ---
 if (-not ([System.Management.Automation.PSTypeName]'AudioHelper.WinMMBridge').Type) {
     Add-Type -TypeDefinition @'
 using System;
@@ -77,16 +83,16 @@ namespace AudioHelper
         [DllImport("winmm.dll", SetLastError = true)]
         private static extern int waveInClose(IntPtr hwi);
 
-        public static byte[] RecordAudioChunk(uint sampleRate, ushort channels, int durationMs, int bufferSize)
+        public static byte[] RecordAudioChunk(uint sampleRate, int durationMs, int bufferSize)
         {
             IntPtr hWaveIn = IntPtr.Zero;
             WAVEFORMATEX wfx = new WAVEFORMATEX();
             wfx.wFormatTag = 1;
-            wfx.nChannels = channels;
+            wfx.nChannels = 1;
             wfx.nSamplesPerSec = sampleRate;
             wfx.wBitsPerSample = 16;
-            wfx.nBlockAlign = (ushort)(channels * 2);
-            wfx.nAvgBytesPerSec = sampleRate * wfx.nBlockAlign;
+            wfx.nBlockAlign = 2;
+            wfx.nAvgBytesPerSec = sampleRate * 2;
             wfx.cbSize = 0;
 
             if (waveInOpen(out hWaveIn, 0, ref wfx, IntPtr.Zero, IntPtr.Zero, 0) != 0)
@@ -130,53 +136,53 @@ namespace AudioHelper
 '@
 }
 
-function Get-StereoPeaks {
-    $managedBuffer = [AudioHelper.WinMMBridge]::RecordAudioChunk($SampleRate, 2, $DurationMs, $BufferSize)
-    if ($null -eq $managedBuffer) { return $null }
+function Test-ImpactPeak {
+    $managedBuffer = [AudioHelper.WinMMBridge]::RecordAudioChunk($SampleRate, $DurationMs, $BufferSize)
+    if ($null -eq $managedBuffer) { return $false }
     
     $samples = New-Object Int16[] ($BufferSize / 2)
     [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
     
-    $leftMax = 0
-    $rightMax = 0
-    
-    # Interleaved stereo layout: [Left0, Right0, Left1, Right1, ...]
-    for ($i = 0; $i -lt $samples.Length; $i += 2) {
-        $lVal = [Math]::Abs($samples[$i])
-        $rVal = [Math]::Abs($samples[$i+1])
-        if ($lVal -gt $leftMax) { $leftMax = $lVal }
-        if ($rVal -gt $rightMax) { $rightMax = $rVal }
+    $maxPeak = 0
+    foreach ($val in $samples) {
+        $abs = [Math]::Abs($val)
+        if ($abs -gt $maxPeak) { $maxPeak = $abs }
     }
-    
-    return @{ Left = $leftMax; Right = $rightMax }
-}
-
-function Listen-ForStereoTap {
-    while ($true) {
-        $peaks = Get-StereoPeaks
-        if ($null -eq $peaks) { Start-Sleep -Milliseconds 40; continue }
-        
-        $maxGlobal = [Math]::Max($peaks.Left, $peaks.Right)
-        if ($maxGlobal -gt $RawVolumeThreshold) {
-            if ($peaks.Left -gt ($peaks.Right * 1.2)) {
-                return 1 # Left dominant
-            } elseif ($peaks.Right -gt ($peaks.Left * 1.2)) {
-                return 2 # Right dominant
-            }
-        }
-        Start-Sleep -Milliseconds 30
-    }
+    return ($maxPeak -gt $RawVolumeThreshold)
 }
 
 # --- EXECUTION ENGINE ---
 Clear-Host
 Write-Host "====================================================" -ForegroundColor Yellow
-Write-Host "       SURFACE PRO 11 STEREO HOLO ENGINE            " -ForegroundColor Yellow
+Write-Host "       SURFACE PRO 11 APP LAUNCHER                  " -ForegroundColor Yellow
 Write-Host "====================================================" -ForegroundColor Yellow
-Write-Host "Tap the left or right side of your desk/kickstand..." -ForegroundColor Gray
+Write-Host " Gestures:" -ForegroundColor White
+Icon = "🔸"
+Write-Host "   1 Strike  -> Open Microsoft Teams" -ForegroundColor Gray
+Write-Host "   2 Strikes -> Open Visual Studio Code" -ForegroundColor Gray
+Write-Host "`nListening for impact...`n" -ForegroundColor DarkGray
 
 while ($true) {
-    $zone = Listen-ForStereoTap
-    Trigger-Action $zone
-    Start-Sleep -Milliseconds 400
+    if (Test-ImpactPeak) {
+        Write-Host "⚡ First impact registered... " -NoNewline -ForegroundColor Yellow
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $doubleStrike = $false
+        
+        while ($sw.ElapsedMilliseconds -lt $DoubleTapWindowMs) {
+            Start-Sleep -Milliseconds 20
+            if (Test-ImpactPeak) {
+                $doubleStrike = $true
+                break
+            }
+        }
+        
+        if ($doubleStrike) {
+            Invoke-MappedAction "VSCode"
+            Start-Sleep -Milliseconds 600
+        } else {
+            Invoke-MappedAction "Teams"
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    Start-Sleep -Milliseconds 30
 }
