@@ -1,189 +1,188 @@
-$SampleRate = 44100
-$DurationMs = 40                                
-$BytesPerSample = 2                              
-$BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-$RawVolumeThreshold = 1500                      
-$DoubleTapWindowMs = 400                        
+# --- CONFIGURATION ---
+$RawVolumeThreshold = 4000      # Adjust higher if you have mic feedback, lower for lighter taps
+$DoubleTapWindowMs = 420        # Window duration to catch the second tap
 
 # --- LAUNCH ACTIONS ---
-function Invoke-MappedAction([string]$gestureType) {
-    Write-Host 'Gesture recognized: ' -NoNewline -ForegroundColor Cyan
-    Write-Host $gestureType -ForegroundColor White
-    
-    switch ($gestureType) {
+function Invoke-MappedAction([string]$actionType) {
+    Write-Host "[🚀 LAUNCH] Triggered: $actionType" -ForegroundColor Cyan
+    switch ($actionType) {
         'Teams' {
-            Write-Host 'Opening Microsoft Teams...' -ForegroundColor Green
-            Start-Process 'msteams:' -ErrorAction SilentlyContinue
+            Start-Process "msteams:" -ErrorAction SilentlyContinue
         }
         'VSCode' {
-            Write-Host 'Opening Visual Studio Code...' -ForegroundColor Green
             $vsCodePath = "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe"
             if (Test-Path $vsCodePath) { 
                 Start-Process $vsCodePath 
             } else { 
-                Start-Process 'code' -ErrorAction SilentlyContinue 
+                Start-Process "code" -ErrorAction SilentlyContinue 
             }
         }
     }
 }
 
-# --- MEMORY-SAFE NATIVE AUDIO BRIDGE ---
-if (-not ([System.Management.Automation.PSTypeName]'AudioHelper.WinMMBridge').Type) {
-    Add-Type -TypeDefinition @'
+# --- THREAD-SAFE EVENT-DRIVEN AUDIO ENGINE ---
+$csharpCode = @'
 using System;
 using System.Runtime.InteropServices;
+using System.Collections.Concurrent;
 
 namespace AudioHelper
 {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct WAVEFORMATEX
-    {
-        public ushort wFormatTag;
-        public ushort nChannels;
-        public uint nSamplesPerSec;
-        public uint nAvgBytesPerSec;
-        public ushort nBlockAlign;
-        public ushort wBitsPerSample;
-        public ushort cbSize;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct WAVEHDR
-    {
-        public IntPtr lpData;
-        public uint dwBufferLength;
-        public uint dwBytesRecorded;
-        public IntPtr dwUser;
-        public uint dwFlags;
-        public uint dwLoops;
-        public IntPtr lpNext;
-        public IntPtr reserved;
-    }
-
-    public class WinMMBridge
+    public class TapListener : IDisposable
     {
         [DllImport("winmm.dll", SetLastError = true)]
         private static extern int waveInOpen(out IntPtr phwi, uint uDeviceID, ref WAVEFORMATEX pwfx, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
+        [DllImport("winmm.dll")] private static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+        [DllImport("winmm.dll")] private static extern int waveInAddBuffer(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+        [DllImport("winmm.dll")] private static extern int waveInStart(IntPtr hwi);
+        [DllImport("winmm.dll")] private static extern int waveInStop(IntPtr hwi);
+        [DllImport("winmm.dll")] private static extern int waveInReset(IntPtr hwi);
+        [DllImport("winmm.dll")] private static extern int waveInClose(IntPtr hwi);
 
-        [DllImport("winmm.dll", SetLastError = true)]
-        private static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WAVEFORMATEX { public ushort wFormatTag; public ushort nChannels; public uint nSamplesPerSec; public uint nAvgBytesPerSec; public ushort nBlockAlign; public ushort wBitsPerSample; public ushort cbSize; }
+        
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WAVEHDR { public IntPtr lpData; public uint dwBufferLength; public uint dwBytesRecorded; public IntPtr dwUser; public uint dwFlags; public uint dwLoops; public IntPtr lpNext; public IntPtr reserved; }
 
-        [DllImport("winmm.dll", SetLastError = true)]
-        private static extern int waveInAddBuffer(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+        private const uint CALLBACK_FUNCTION = 0x00030000;
+        private delegate void WaveInProc(IntPtr hwi, uint uMsg, IntPtr dwInstance, IntPtr dwParam1, IntPtr dwParam2);
 
-        [DllImport("winmm.dll", SetLastError = true)]
-        private static extern int waveInStart(IntPtr hwi);
+        private IntPtr hWaveIn = IntPtr.Zero;
+        private WaveInProc waveCallback;
+        private ConcurrentQueue<int> peakQueue = new ConcurrentQueue<int>();
+        private GCHandle[] handles = new GCHandle[3];
+        private WAVEHDR[] headers = new WAVEHDR[3];
+        private bool running = false;
 
-        [DllImport("winmm.dll", SetLastError = true)]
-        private static extern int waveInStop(IntPtr hwi);
-
-        [DllImport("winmm.dll", SetLastError = true)]
-        private static extern int waveInReset(IntPtr hwi);
-
-        [DllImport("winmm.dll", SetLastError = true)]
-        private static extern int waveInClose(IntPtr hwi);
-
-        public static byte[] RecordAudioChunk(uint sampleRate, int durationMs, int bufferSize)
+        public void Start()
         {
-            IntPtr hWaveIn = IntPtr.Zero;
+            if (running) return;
+            running = true;
+
             WAVEFORMATEX wfx = new WAVEFORMATEX();
             wfx.wFormatTag = 1;
             wfx.nChannels = 1;
-            wfx.nSamplesPerSec = sampleRate;
+            wfx.nSamplesPerSec = 44100;
             wfx.wBitsPerSample = 16;
             wfx.nBlockAlign = 2;
-            wfx.nAvgBytesPerSec = sampleRate * 2;
+            wfx.nAvgBytesPerSec = 88200;
             wfx.cbSize = 0;
 
-            if (waveInOpen(out hWaveIn, 0, ref wfx, IntPtr.Zero, IntPtr.Zero, 0) != 0)
+            waveCallback = new WaveInProc(DataCallback);
+            waveInOpen(out hWaveIn, 0, ref wfx, Marshal.GetFunctionPointerForDelegate(waveCallback), IntPtr.Zero, CALLBACK_FUNCTION);
+
+            uint bufSize = 1764; // ~20ms slices
+            for (int i = 0; i < 3; i++)
             {
-                return null;
+                byte[] mem = new byte[bufSize];
+                handles[i] = GCHandle.Alloc(mem, GCHandleType.Pinned);
+                headers[i] = new WAVEHDR { lpData = handles[i].AddrOfPinnedObject(), dwBufferLength = bufSize, dwUser = (IntPtr)i };
+                waveInPrepareHeader(hWaveIn, ref headers[i], (uint)Marshal.SizeOf(headers[i]));
+                waveInAddBuffer(hWaveIn, ref headers[i], (uint)Marshal.SizeOf(headers[i]));
             }
-
-            IntPtr hBuffer = Marshal.AllocHGlobal(bufferSize);
-            byte[] managedBuffer = new byte[bufferSize];
-
-            try
-            {
-                WAVEHDR whdr = new WAVEHDR();
-                whdr.lpData = hBuffer;
-                whdr.dwBufferLength = (uint)bufferSize;
-                whdr.dwFlags = 0;
-
-                waveInPrepareHeader(hWaveIn, ref whdr, (uint)Marshal.SizeOf(whdr));
-                waveInAddBuffer(hWaveIn, ref whdr, (uint)Marshal.SizeOf(whdr));
-
-                waveInStart(hWaveIn);
-                System.Threading.Thread.Sleep(durationMs);
-                waveInStop(hWaveIn);
-
-                Marshal.Copy(hBuffer, managedBuffer, 0, bufferSize);
-            }
-            finally
-            {
-                waveInReset(hWaveIn);
-                waveInClose(hWaveIn);
-                if (hBuffer != IntPtr.Zero)
-                {
-                    Marshal.FreeHGlobal(hBuffer);
-                }
-            }
-
-            return managedBuffer;
+            waveInStart(hWaveIn);
         }
+
+        private void DataCallback(IntPtr hwi, uint uMsg, IntPtr dwInstance, IntPtr dwParam1, IntPtr dwParam2)
+        {
+            if (uMsg == 0x3BF) // MM_WIM_DATA
+            {
+                WAVEHDR hdr = (WAVEHDR)Marshal.PtrToStructure(dwParam1, typeof(WAVEHDR));
+                int idx = (int)hdr.dwUser;
+                short[] samples = new short[hdr.dwBytesRecorded / 2];
+                Marshal.Copy(hdr.lpData, samples, 0, samples.Length);
+
+                int max = 0;
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    int v = Math.Abs(samples[i]);
+                    if (v > max) max = v;
+                }
+                peakQueue.Enqueue(max);
+
+                if (running) waveInAddBuffer(hWaveIn, ref headers[idx], (uint)Marshal.SizeOf(headers[idx]));
+            }
+        }
+
+        public int ReadPeak()
+        {
+            if (peakQueue.TryDequeue(out int p)) return p;
+            return 0;
+        }
+
+        public void Stop()
+        {
+            if (!running) return;
+            running = false;
+            waveInStop(hWaveIn);
+            waveInReset(hWaveIn);
+            waveInClose(hWaveIn);
+            for (int i = 0; i < 3; i++) if (handles[i].IsAllocated) handles[i].Free();
+        }
+
+        public void Dispose() { Stop(); }
     }
 }
 '@
+
+if (-not ([System.Management.Automation.PSTypeName]'AudioHelper.TapListener').Type) {
+    Add-Type -TypeDefinition $csharpCode
 }
 
-function Get-CurrentPeak {
-    $managedBuffer = [AudioHelper.WinMMBridge]::RecordAudioChunk($SampleRate, $DurationMs, $BufferSize)
-    if ($null -eq $managedBuffer) { return 0 }
-    
-    $samples = New-Object Int16[] ($BufferSize / 2)
-    [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
-    
-    $maxPeak = 0
-    foreach ($val in $samples) {
-        $abs = [Math]::Abs($val)
-        if ($abs -gt $maxPeak) { $maxPeak = $abs }
-    }
-    return $maxPeak
-}
-
-# --- EXECUTION ENGINE ---
+# --- MAIN RUNTIME ENGINE ---
 Clear-Host
 Write-Host '====================================================' -ForegroundColor Yellow
-Write-Host '       SURFACE PRO 11 APP LAUNCHER                  ' -ForegroundColor Yellow
+Write-Host '       WINDOWS HOLO TAP ENGINE (ACTIVE)             ' -ForegroundColor Yellow
 Write-Host '====================================================' -ForegroundColor Yellow
-Write-Host 'Gestures:' -ForegroundColor White
-Write-Host '  1 Strike  -> Open Microsoft Teams' -ForegroundColor Gray
-Write-Host '  2 Strikes -> Open Visual Studio Code' -ForegroundColor Gray
-Write-Host 'Listening for impact...' -ForegroundColor DarkGray
+Write-Host ' Gestures:' -ForegroundColor White
+Write-Host '   1 Tap  -> Open Microsoft Teams' -ForegroundColor Gray
+Write-Host '   2 Taps -> Open Visual Studio Code' -ForegroundColor Gray
+Write-Host "`nListening for structural strikes...`n" -ForegroundColor DarkGray
 
-while ($true) {
-    $initialPeak = Get-CurrentPeak
-    if ($initialPeak -gt $RawVolumeThreshold) {
-        Write-Host 'Impact registered...' -ForegroundColor Yellow
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $doubleStrike = $false
+$listener = New-Object AudioHelper.TapListener
+$listener.Start()
+
+$state = 'IDLE'
+$sw = New-Object System.Diagnostics.Stopwatch
+
+try {
+    while ($true) {
+        $peak = $listener.ReadPeak()
         
-        while ($sw.ElapsedMilliseconds -lt $DoubleTapWindowMs) {
-            Start-Sleep -Milliseconds 15
-            $nextPeak = Get-CurrentPeak
-            if ($nextPeak -gt $RawVolumeThreshold) {
-                $doubleStrike = $true
-                break
+        if ($peak -gt $RawVolumeThreshold) {
+            if ($state -eq 'IDLE') {
+                Write-Host "⚡ Tap 1 registered ($peak)!" -ForegroundColor Yellow
+                $sw.Restart()
+                $state = 'WAITING_FOR_SECOND_TAP'
+            }
+            elseif ($state -eq 'WAITING_FOR_SECOND_TAP' -and $sw.ElapsedMilliseconds -gt 60) {
+                Write-Host "⚡ Tap 2 registered ($peak) -> VSCode!" -ForegroundColor Green
+                Invoke-MappedAction 'VSCode'
+                $state = 'COOLDOWN'
+                $sw.Restart()
             }
         }
-        
-        if ($doubleStrike) {
-            Invoke-MappedAction 'VSCode'
-            Start-Sleep -Milliseconds 600
-        } else {
+
+        # Check timeout for single tap confirmation
+        if ($state -eq 'WAITING_FOR_SECOND_TAP' -and $sw.ElapsedMilliseconds -gt $DoubleTapWindowMs) {
+            Write-Host 'Single tap confirmed -> Teams!' -ForegroundColor DarkGreen
             Invoke-MappedAction 'Teams'
-            Start-Sleep -Milliseconds 500
+            $state = 'COOLDOWN'
+            $sw.Restart()
         }
+
+        # Reset state after short cooldown
+        if ($state -eq 'COOLDOWN' -and $sw.ElapsedMilliseconds -gt 700) {
+            while ($listener.ReadPeak() -ne 0) {} # Clear residual vibration buffer
+            $state = 'IDLE'
+            Write-Host 'Listening...' -ForegroundColor DarkGray
+        }
+
+        Start-Sleep -Milliseconds 5
     }
-    Start-Sleep -Milliseconds 20
+}
+finally {
+    $listener.Stop()
+    $listener.Dispose()
 }
