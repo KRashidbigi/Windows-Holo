@@ -28,32 +28,68 @@ function Trigger-Action([int]$zoneId) {
     }
 }
 
-# --- ERROR-PROOF NATIVE WINDOWS AUDIO RECORDING API ---
-# Hard check to ensure compilation executes properly without silent failures
-$TypeExists = $false
-try {
-    $TypeExists = [bool][Type]::GetType("NativeAudio.WinMM")
-} catch {
-    $TypeExists = $false
-}
+# --- ROBUST C# AUDIO HELPER COMPILATION ---
+if (-not ([System.Management.Automation.PSTypeName]'AudioHelper.WinMMBridge').Type) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
 
-if (-not $TypeExists) {
-    $Signatures = @'
-    [DllImport("winmm.dll")] public static extern int waveInOpen(out IntPtr phwi, uint uDeviceID, ref WAVEFORMATEX pwfx, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
-    [DllImport("winmm.dll")] public static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
-    [DllImport("winmm.dll")] public static extern int waveInAddBuffer(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
-    [DllImport("winmm.dll")] public static extern int waveInStart(IntPtr hwi);
-    [DllImport("winmm.dll")] public static extern int waveInStop(IntPtr hwi);
-    [DllImport("winmm.dll")] public static extern int waveInReset(IntPtr hwi);
-    [DllImport("winmm.dll")] public static extern int waveInClose(IntPtr hwi);
-    [StructLayout(LayoutKind.Sequential)] public struct WAVEFORMATEX { public ushort wFormatTag; public ushort nChannels; public uint nSamplesPerSec; public uint nAvgBytesPerSec; public ushort nBlockAlign; public ushort wBitsPerSample; public ushort cbSize; }
-    [StructLayout(LayoutKind.Sequential)] public struct WAVEHDR { public IntPtr lpData; public uint dwBufferLength; public uint dwBytesRecorded; public IntPtr dwUser; public uint dwFlags; public uint dwLoops; public IntPtr lpNext; public IntPtr reserved; }
+namespace AudioHelper
+{
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WAVEFORMATEX
+    {
+        public ushort wFormatTag;
+        public ushort nChannels;
+        public uint nSamplesPerSec;
+        public uint nAvgBytesPerSec;
+        public ushort nBlockAlign;
+        public ushort wBitsPerSample;
+        public ushort cbSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WAVEHDR
+    {
+        public IntPtr lpData;
+        public uint dwBufferLength;
+        public uint dwBytesRecorded;
+        public IntPtr dwUser;
+        public uint dwFlags;
+        public uint dwLoops;
+        public IntPtr lpNext;
+        public IntPtr reserved;
+    }
+
+    public class WinMMBridge
+    {
+        [DllImport("winmm.dll", SetLastError = true)]
+        public static extern int waveInOpen(out IntPtr phwi, uint uDeviceID, ref WAVEFORMATEX pwfx, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
+
+        [DllImport("winmm.dll", SetLastError = true)]
+        public static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+
+        [DllImport("winmm.dll", SetLastError = true)]
+        public static extern int waveInAddBuffer(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+
+        [DllImport("winmm.dll", SetLastError = true)]
+        public static extern int waveInStart(IntPtr hwi);
+
+        [DllImport("winmm.dll", SetLastError = true)]
+        public static extern int waveInStop(IntPtr hwi);
+
+        [DllImport("winmm.dll", SetLastError = true)]
+        public static extern int waveInReset(IntPtr hwi);
+
+        [DllImport("winmm.dll", SetLastError = true)]
+        public static extern int waveInClose(IntPtr hwi);
+    }
+}
 '@
-    Add-Type -MemberDefinition $Signatures -Name "WinMM" -Namespace "NativeAudio" -ErrorAction Stop | Out-Null
 }
 
-# Define the format structure globally
-$script:wfx = New-Object NativeAudio.WAVEFORMATEX
+# Initialize format struct via proper namespace
+$script:wfx = New-Object AudioHelper.WAVEFORMATEX
 $script:wfx.wFormatTag = 1 
 $script:wfx.nChannels = 1
 $script:wfx.nSamplesPerSec = $SampleRate
@@ -65,11 +101,9 @@ $script:wfx.cbSize = 0
 # --- AUDIO FEATURE EXTRACTION ---
 function Get-TapProfile {
     $hWaveIn = [IntPtr]::Zero
+    $format = $script:wfx
     
-    # FIX: Copy the script-scoped variable to a local reference variable before applying [ref]
-    $localWfx = $script:wfx
-    
-    if ([NativeAudio.WinMM]::waveInOpen([ref]$hWaveIn, 0, [ref]$localWfx, [IntPtr]::Zero, [IntPtr]::Zero, 0) -ne 0) { 
+    if ([AudioHelper.WinMMBridge]::waveInOpen([ref]$hWaveIn, 0, [ref]$format, [IntPtr]::Zero, [IntPtr]::Zero, 0) -ne 0) { 
         Write-Error "Could not access native microphone device."
         return $null 
     }
@@ -77,23 +111,23 @@ function Get-TapProfile {
     $hBuffer = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($BufferSize)
     
     try {
-        $whdr = New-Object NativeAudio.WAVEHDR
+        $whdr = New-Object AudioHelper.WAVEHDR
         $whdr.lpData = $hBuffer
         $whdr.dwBufferLength = $BufferSize
         $whdr.dwFlags = 0
         
-        [NativeAudio.WinMM]::waveInPrepareHeader($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
-        [NativeAudio.WinMM]::waveInAddBuffer($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
+        [AudioHelper.WinMMBridge]::waveInPrepareHeader($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
+        [AudioHelper.WinMMBridge]::waveInAddBuffer($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
         
-        [NativeAudio.WinMM]::waveInStart($hWaveIn) | Out-Null
+        [AudioHelper.WinMMBridge]::waveInStart($hWaveIn) | Out-Null
         Start-Sleep -Milliseconds $DurationMs
-        [NativeAudio.WinMM]::waveInStop($hWaveIn) | Out-Null
+        [AudioHelper.WinMMBridge]::waveInStop($hWaveIn) | Out-Null
         
         $managedBuffer = New-Object byte[] $BufferSize
         [System.Runtime.InteropServices.Marshal]::Copy($hBuffer, $managedBuffer, 0, $BufferSize)
         
-        [NativeAudio.WinMM]::waveInReset($hWaveIn) | Out-Null
-        [NativeAudio.WinMM]::waveInClose($hWaveIn) | Out-Null
+        [AudioHelper.WinMMBridge]::waveInReset($hWaveIn) | Out-Null
+        [AudioHelper.WinMMBridge]::waveInClose($hWaveIn) | Out-Null
         
         $samples = New-Object Int16[] ($BufferSize / 2)
         [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
