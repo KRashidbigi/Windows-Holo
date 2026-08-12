@@ -34,11 +34,15 @@ function Trigger-Action([int]$zoneId) {
 }
 
 # --- ERROR-PROOF NATIVE WINDOWS AUDIO RECORDING API ---
+# Hard check to ensure compilation executes properly without silent failures
+$TypeExists = $false
 try {
-    # Check if the type already exists by trying to access its assembly
-    [NativeAudio.WinMM] | Out-Null
+    $TypeExists = [bool][Type]::GetType("NativeAudio.WinMM")
 } catch {
-    # If it fails, compile it now
+    $TypeExists = $false
+}
+
+if (-not $TypeExists) {
     $Signatures = @'
     [DllImport("winmm.dll")] public static extern int waveInOpen(out IntPtr phwi, uint uDeviceID, ref WAVEFORMATEX pwfx, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
     [DllImport("winmm.dll")] public static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
@@ -50,7 +54,7 @@ try {
     [StructLayout(LayoutKind.Sequential)] public struct WAVEFORMATEX { public ushort wFormatTag; public ushort nChannels; public uint nSamplesPerSec; public uint nAvgBytesPerSec; public ushort nBlockAlign; public ushort wBitsPerSample; public ushort cbSize; }
     [StructLayout(LayoutKind.Sequential)] public struct WAVEHDR { public IntPtr lpData; public uint dwBufferLength; public uint dwBytesRecorded; public IntPtr dwUser; public uint dwFlags; public uint dwLoops; public IntPtr lpNext; public IntPtr reserved; }
 '@
-    Add-Type -MemberDefinition $Signatures -Name "WinMM" -Namespace "NativeAudio" | Out-Null
+    Add-Type -MemberDefinition $Signatures -Name "WinMM" -Namespace "NativeAudio" -ErrorAction Stop | Out-Null
 }
 
 # Define the format structure globally
@@ -67,8 +71,10 @@ $script:wfx.cbSize = 0
 function Get-TapProfile {
     $hWaveIn = [IntPtr]::Zero
     
-    # Use script-level scope for the audio format reference
-    if ([NativeAudio.WinMM]::waveInOpen([ref]$hWaveIn, 0, [ref]$script:wfx, [IntPtr]::Zero, [IntPtr]::Zero, 0) -ne 0) { 
+    # FIX: Copy the script-scoped variable to a local reference variable before applying [ref]
+    $localWfx = $script:wfx
+    
+    if ([NativeAudio.WinMM]::waveInOpen([ref]$hWaveIn, 0, [ref]$localWfx, [IntPtr]::Zero, [IntPtr]::Zero, 0) -ne 0) { 
         Write-Error "Could not access native microphone device."
         return $null 
     }
