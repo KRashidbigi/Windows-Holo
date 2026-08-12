@@ -1,5 +1,5 @@
 # ==================================================================================
-# SURFACE HOLO ENGINE (Universal Windows Port)
+# WINDOWS HOLO ENGINE (Universal Windows Port)
 # ==================================================================================
 # Core concept, logic flow, and zone layouts adapted from the macOS project 'Holo'
 # Original Creator: JustinGamer191 (https://github.com)
