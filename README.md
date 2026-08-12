@@ -23,7 +23,7 @@ Because modern laptop manufacturers include heavy AI filtering to remove table n
 2. Alternatively, press `Win + R`, type `mmsys.cpl`, go to the **Recording** tab -> **Microphone Properties** -> **Advanced**, and uncheck **Enable audio enhancements**.
 
 ## Note
-I used this with a Surface Pro 11 which has a sturdy kickstand and sound travels up well; on line 15 i have put my threshold at 1200 `$Threshold = 1200 ` If your laptop uses a standard plastic hinge, then audio won't travel up as well; you should set your threshold to about 600 - 800. Any lower and it will pick up basically any sound from any direction.
+I used this with a Surface Pro 11 which has a sturdy kickstand and sound travels up well; on line 15 I have put the threshold at 1200 `$Threshold = 1200 ` If your laptop uses a standard plastic hinge, then audio won't travel up as well; you should set your threshold to about 700 - 1200. Any lower and it will pick up basically any sound from any direction. I usually use 1500 on my Surface Pro.
 
 ## Architectural Mapping: macOS vs. Windows Port
 
