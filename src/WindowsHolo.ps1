@@ -1,10 +1,10 @@
 $SampleRate = 44100
-$DurationMs = 80                                
+$DurationMs = 40                                # FASTER: Shorter slice to minimize blind spots
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-# Adjust this threshold higher or lower depending on how hard you strike your desk
 $RawVolumeThreshold = 3500                      
-$DoubleTapWindowMs = 350                        
+$DoubleTapWindowMs = 400                        # SLIGHTLY WIDER: Gives a bit more room for the second hit
+                    
 
 # --- LAUNCH ACTIONS ---
 function Invoke-MappedAction([string]$gestureType) {
