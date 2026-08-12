@@ -2,11 +2,9 @@ $SampleRate = 44100
 $DurationMs = 150                               
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-# BALANCED: Sensitive enough to catch your tap, high enough to block quiet room air
-$EnergyThreshold = 0.08 
-# TIGHT: Keeps recognition accurate to your calibrated zones
-$MatchStrictness = 0.10                        
-$NumCalibrationTaps = 5                
+# RAW AMPLITUDE THRESHOLD: 16-bit PCM max value is 32767. Let's set a distinct volume floor (e.g., 4000 out of 32767)
+$RawVolumeThreshold = 4000                      
+$NumCalibrationTaps = 5                         
 
 $Zones = @{
     1 = "Upper Left (Left Rear)"
@@ -31,7 +29,7 @@ function Trigger-Action([int]$zoneId) {
     }
 }
 
-# --- COMPLETE MEMORY-SAFE NATIVE AUDIO BRIDGE ---
+# --- MEMORY-SAFE NATIVE AUDIO BRIDGE ---
 if (-not ([System.Management.Automation.PSTypeName]'AudioHelper.WinMMBridge').Type) {
     Add-Type -TypeDefinition @'
 using System;
@@ -140,48 +138,30 @@ namespace AudioHelper
 '@
 }
 
-# --- AUDIO FEATURE EXTRACTION ---
-function Get-TapProfile {
+# --- DIRECT AUDIO PEAK CHECK ---
+function Get-PeakAmplitude {
     $managedBuffer = [AudioHelper.WinMMBridge]::RecordAudioChunk($SampleRate, $DurationMs, $BufferSize)
-    if ($null -eq $managedBuffer) { return $null }
+    if ($null -eq $managedBuffer) { return 0 }
     
     $samples = New-Object Int16[] ($BufferSize / 2)
     [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
     
-    $chunkSize = 22 
-    $profile = New-Object System.Collections.Generic.List[double]
-    for ($i = 0; $i -lt $samples.Length; $i += $chunkSize) {
-        $sum = 0
-        $count = 0
-        for ($j = $i; $j -lt ($i + $chunkSize) -and $j -lt $samples.Length; $j++) {
-            $val = $samples[$j]
-            if ($val -lt 0) { $sum -= $val } else { $sum += $val }
-            $count++
-        }
-        $profile.Add($sum / $count)
+    $maxPeak = 0
+    foreach ($val in $samples) {
+        $abs = [Math]::Abs($val)
+        if ($abs -gt $maxPeak) { $maxPeak = $abs }
     }
-    
-    $magnitude = 0.0
-    foreach ($val in $profile) { $magnitude += $val * $val }
-    $magnitude = [Math]::Sqrt($magnitude)
-    
-    if ($magnitude -eq 0) { return $profile }
-    $normProfile = New-Object double[] $profile.Count
-    for ($i = 0; $i -lt $profile.Count; $i++) { $normProfile[$i] = $profile[$i] / $magnitude }
-    
-    return ,$normProfile
+    return $maxPeak
 }
 
-function Listen-ForTap {
+function Listen-ForImpact {
+    Write-Host "Listening for impact (Slap the table hard)... " -NoNewline
     while ($true) {
-        $profile = Get-TapProfile
-        if ($null -eq $profile) { Start-Sleep -Milliseconds 300; continue }
-        
-        $maxEnergy = 0
-        foreach ($val in $profile) { if ($val -gt $maxEnergy) { $maxEnergy = $val } }
-        
-        # TUNED: Only accept the sample if peak energy clears our minimum noise floor
-        if ($maxEnergy -gt $EnergyThreshold) { return ,$profile }
+        $peak = Get-PeakAmplitude
+        if ($peak -gt $RawVolumeThreshold) {
+            Write-Host " HIT! Peak: $peak" -ForegroundColor Green
+            return $true
+        }
         Start-Sleep -Milliseconds 30
     }
 }
@@ -189,56 +169,14 @@ function Listen-ForTap {
 # --- EXECUTION ENGINE ---
 Clear-Host
 Write-Host "====================================================" -ForegroundColor Yellow
-Write-Host "         UNIVERSAL WINDOWS HOLO TAP ENGINE          " -ForegroundColor Yellow
+Write-Host "         RAW VOLUME WINDOWS HOLO ENGINE             " -ForegroundColor Yellow
 Write-Host "====================================================" -ForegroundColor Yellow
 
-$Database = @{}
-
-# 1. NATIVE CALIBRATION
-Write-Host "`n--- PHASE 1: NATIVE CALIBRATION ---" -ForegroundColor Yellow
-foreach ($zoneKey in ($Zones.Keys | Sort-Object)) {
-    Write-Host "`n👉 Prepare to calibrate Zone $zoneKey [$($Zones[$zoneKey])]" -ForegroundColor White
-    Read-Host "Press Enter to start calibrating, then perform your taps..."
-    
-    $zoneProfiles = New-Object System.Collections.Generic.List[double[]]
-    for ($i = 1; $i -le $NumCalibrationTaps; $i++) {
-        Write-Host "  [$i/$NumCalibrationTaps] Tap $($Zones[$zoneKey]) now... " -NoNewline
-        $profile = Listen-ForTap
-        $zoneProfiles.Add($profile)
-        Write-Host "Captured!" -ForegroundColor Green
-        Start-Sleep -Milliseconds 400
-    }
-    $Database[$zoneKey] = $zoneProfiles
-}
-
-# 2. LIVE LISTENING ENGINE
-Write-Host "`n--- PHASE 2: LIVE RUNTIME ACTIVE ---" -ForegroundColor Yellow
-Write-Host "Tap your desk zones to interact. Press Ctrl+C to close script." -ForegroundColor Gray
+# Simple test loop to check if your physical slaps register properly now
+Write-Host "`n--- TESTING RAW AMPLITUDE DETECTION ---" -ForegroundColor Yellow
+Write-Host "Slap your desk a few times. Press Ctrl+C to exit." -ForegroundColor Gray
 
 while ($true) {
-    $liveProfile = Listen-ForTap
-    if ($null -eq $liveProfile) { Start-Sleep -Milliseconds 300; continue }
-    $bestZone = -1
-    $minDistance = [double]::MaxValue
-    
-    foreach ($zoneKey in $Database.Keys) {
-        foreach ($calibratedProfile in $Database[$zoneKey]) {
-            $distance = 0.0
-            for ($i = 0; $i -lt $liveProfile.Length; $i++) {
-                $diff = $liveProfile[$i] - $calibratedProfile[$i]
-                $distance += $diff * $diff
-            }
-            if ($distance -lt $minDistance) {
-                $minDistance = $distance
-                $bestZone = $zoneKey
-            }
-        }
-    }
-    
-    # TUNED: Distance must now be tightly constrained by $MatchStrictness
-    if ($bestZone -ne -1 -and $minDistance -lt $MatchStrictness) { 
-        Trigger-Action $bestZone
-        Start-Sleep -Milliseconds 400 # Cooldown to prevent multi-triggering
-    }
-    Start-Sleep -Milliseconds 100 
+    $detected = Listen-ForImpact
+    Start-Sleep -Milliseconds 300
 }
