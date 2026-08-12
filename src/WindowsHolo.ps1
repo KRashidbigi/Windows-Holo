@@ -166,7 +166,6 @@ for ($k = 1; $k -le $roomNoiseSamples; $k++) {
     Start-Sleep -Milliseconds 15
 }
 
-# Set threshold safely above room ambient baseline (1.8x background noise floor + safety buffer)
 $RawVolumeThreshold = [Math]::Max(1200, [int]($maxNoiseSeen * 1.8))
 Write-Host "[✓] Calibration complete! Dynamic threshold set to: $RawVolumeThreshold`n" -ForegroundColor Green
 
