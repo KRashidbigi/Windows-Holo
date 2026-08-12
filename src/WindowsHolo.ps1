@@ -157,7 +157,6 @@ Write-Host "====================================================" -ForegroundCol
 Write-Host "       SURFACE PRO 11 APP LAUNCHER                  " -ForegroundColor Yellow
 Write-Host "====================================================" -ForegroundColor Yellow
 Write-Host " Gestures:" -ForegroundColor White
-Icon = "🔸"
 Write-Host "   1 Strike  -> Open Microsoft Teams" -ForegroundColor Gray
 Write-Host "   2 Strikes -> Open Visual Studio Code" -ForegroundColor Gray
 Write-Host "`nListening for impact...`n" -ForegroundColor DarkGray
