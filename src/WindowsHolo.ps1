@@ -6,20 +6,21 @@ $DoubleTapWindowMs = 400
 
 # --- LAUNCH ACTIONS ---
 function Invoke-MappedAction([string]$gestureType) {
-    Write-Host "`n[🚀 LAUNCH] Gesture recognized: $gestureType" -ForegroundColor Cyan
+    Write-Host 'Gesture recognized: ' -NoNewline -ForegroundColor Cyan
+    Write-Host $gestureType -ForegroundColor White
     
     switch ($gestureType) {
-        "Teams" {
-            Write-Host "Opening Microsoft Teams..." -ForegroundColor Green
-            Start-Process "msteams:" -ErrorAction SilentlyContinue
+        'Teams' {
+            Write-Host 'Opening Microsoft Teams...' -ForegroundColor Green
+            Start-Process 'msteams:' -ErrorAction SilentlyContinue
         }
-        "VSCode" {
-            Write-Host "Opening Visual Studio Code..." -ForegroundColor Green
+        'VSCode' {
+            Write-Host 'Opening Visual Studio Code...' -ForegroundColor Green
             $vsCodePath = "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe"
             if (Test-Path $vsCodePath) { 
                 Start-Process $vsCodePath 
             } else { 
-                Start-Process "code" -ErrorAction SilentlyContinue 
+                Start-Process 'code' -ErrorAction SilentlyContinue 
             }
         }
     }
@@ -151,12 +152,12 @@ function Get-CurrentPeak {
 
 # --- EXECUTION ENGINE ---
 Clear-Host
-Write-Host "====================================================" -ForegroundColor Yellow
-Write-Host "                     APP LAUNCHER                   " -ForegroundColor Yellow
-Write-Host "====================================================" -ForegroundColor Yellow
+Write-Host '====================================================' -ForegroundColor Yellow
+Write-Host '       SURFACE PRO 11 SMART APP LAUNCHER            ' -ForegroundColor Yellow
+Write-Host '====================================================' -ForegroundColor Yellow
 
 # DYNAMIC NOISE CALIBRATION
-Write-Host "`n[i] Calibrating ambient room noise. Keep the desk still..." -ForegroundColor White
+Write-Host 'Calibrating ambient room noise. Keep desk still...' -ForegroundColor White
 $roomNoiseSamples = 50
 $maxNoiseSeen = 0
 
@@ -167,17 +168,17 @@ for ($k = 1; $k -le $roomNoiseSamples; $k++) {
 }
 
 $RawVolumeThreshold = [Math]::Max(1200, [int]($maxNoiseSeen * 1.8))
-Write-Host "[✓] Calibration complete! Dynamic threshold set to: $RawVolumeThreshold`n" -ForegroundColor Green
+Write-Host 'Calibration complete!' -ForegroundColor Green
 
-Write-Host " Gestures:" -ForegroundColor White
-Write-Host "   1 Strike  -> Open Microsoft Teams" -ForegroundColor Gray
-Write-Host "   2 Strikes -> Open Visual Studio Code" -ForegroundColor Gray
-Write-Host "`nListening for impact...`n" -ForegroundColor DarkGray
+Write-Host 'Gestures:' -ForegroundColor White
+Write-Host '  1 Strike  -> Open Microsoft Teams' -ForegroundColor Gray
+Write-Host '  2 Strikes -> Open Visual Studio Code' -ForegroundColor Gray
+Write-Host 'Listening for impact...' -ForegroundColor DarkGray
 
 while ($true) {
     $initialPeak = Get-CurrentPeak
     if ($initialPeak -gt $RawVolumeThreshold) {
-        Write-Host "First impact registered... " -NoNewline -ForegroundColor Yellow
+        Write-Host 'Impact registered...' -ForegroundColor Yellow
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $doubleStrike = $false
         
