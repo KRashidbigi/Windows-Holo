@@ -1,10 +1,8 @@
 $SampleRate = 44100
-$DurationMs = 40                                # FASTER: Shorter slice to minimize blind spots
+$DurationMs = 40                                
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-$RawVolumeThreshold = 3700                      
-$DoubleTapWindowMs = 400                        # SLIGHTLY WIDER: Gives a bit more room for the second hit
-                    
+$DoubleTapWindowMs = 400                        
 
 # --- LAUNCH ACTIONS ---
 function Invoke-MappedAction([string]$gestureType) {
@@ -136,9 +134,9 @@ namespace AudioHelper
 '@
 }
 
-function Test-ImpactPeak {
+function Get-CurrentPeak {
     $managedBuffer = [AudioHelper.WinMMBridge]::RecordAudioChunk($SampleRate, $DurationMs, $BufferSize)
-    if ($null -eq $managedBuffer) { return $false }
+    if ($null -eq $managedBuffer) { return 0 }
     
     $samples = New-Object Int16[] ($BufferSize / 2)
     [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
@@ -148,28 +146,46 @@ function Test-ImpactPeak {
         $abs = [Math]::Abs($val)
         if ($abs -gt $maxPeak) { $maxPeak = $abs }
     }
-    return ($maxPeak -gt $RawVolumeThreshold)
+    return $maxPeak
 }
 
 # --- EXECUTION ENGINE ---
 Clear-Host
 Write-Host "====================================================" -ForegroundColor Yellow
-Write-Host "                    APP LAUNCHER                    " -ForegroundColor Yellow
+Write-Host "                     APP LAUNCHER                   " -ForegroundColor Yellow
 Write-Host "====================================================" -ForegroundColor Yellow
+
+# DYNAMIC NOISE CALIBRATION
+Write-Host "`n[i] Calibrating ambient room noise. Keep the desk still..." -ForegroundColor White
+$roomNoiseSamples = 50
+$maxNoiseSeen = 0
+
+for ($k = 1; $k -le $roomNoiseSamples; $k++) {
+    $peak = Get-CurrentPeak
+    if ($peak -gt $maxNoiseSeen) { $maxNoiseSeen = $peak }
+    Start-Sleep -Milliseconds 15
+}
+
+# Set threshold safely above room ambient baseline (1.8x background noise floor + safety buffer)
+$RawVolumeThreshold = [Math]::Max(1200, [int]($maxNoiseSeen * 1.8))
+Write-Host "[✓] Calibration complete! Dynamic threshold set to: $RawVolumeThreshold`n" -ForegroundColor Green
+
 Write-Host " Gestures:" -ForegroundColor White
 Write-Host "   1 Strike  -> Open Microsoft Teams" -ForegroundColor Gray
 Write-Host "   2 Strikes -> Open Visual Studio Code" -ForegroundColor Gray
 Write-Host "`nListening for impact...`n" -ForegroundColor DarkGray
 
 while ($true) {
-    if (Test-ImpactPeak) {
-        Write-Host "⚡ First impact registered... " -NoNewline -ForegroundColor Yellow
+    $initialPeak = Get-CurrentPeak
+    if ($initialPeak -gt $RawVolumeThreshold) {
+        Write-Host "⚡ First impact ($initialPeak) registered... " -NoNewline -ForegroundColor Yellow
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $doubleStrike = $false
         
         while ($sw.ElapsedMilliseconds -lt $DoubleTapWindowMs) {
-            Start-Sleep -Milliseconds 20
-            if (Test-ImpactPeak) {
+            Start-Sleep -Milliseconds 15
+            $nextPeak = Get-CurrentPeak
+            if ($nextPeak -gt $RawVolumeThreshold) {
                 $doubleStrike = $true
                 break
             }
@@ -183,5 +199,5 @@ while ($true) {
             Start-Sleep -Milliseconds 500
         }
     }
-    Start-Sleep -Milliseconds 30
+    Start-Sleep -Milliseconds 20
 }
