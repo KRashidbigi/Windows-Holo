@@ -2,11 +2,11 @@ $SampleRate = 44100
 $DurationMs = 150                               
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-# INCREASED: Higher number means quiet room noise is completely ignored
-$EnergyThreshold = 0.20 
-# TIGHTER: Lower number means live taps must match your calibration profile strictly
+# BALANCED: Sensitive enough to catch your tap, high enough to block quiet room air
+$EnergyThreshold = 0.08 
+# TIGHT: Keeps recognition accurate to your calibrated zones
 $MatchStrictness = 0.10                        
-$NumCalibrationTaps = 5                       
+$NumCalibrationTaps = 5                
 
 $Zones = @{
     1 = "Upper Left (Left Rear)"
