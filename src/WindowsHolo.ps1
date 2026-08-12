@@ -4,6 +4,7 @@
 # Core concept, logic flow, and zone layouts adapted from the macOS project 'Holo'
 # Original Creator: JustinGamer191 (https://github.com)
 # Compatible with both x64 and ARM64 Windows 10/11 architectures.
+# Safe memory management patch applied.
 # ==================================================================================
 
 # --- CONFIGURATION ---
@@ -66,50 +67,59 @@ function Get-TapProfile {
     $hWaveIn = [IntPtr]::Zero
     if ($WinMM::waveInOpen([ref]$hWaveIn, 0, [ref]$wfx, [IntPtr]::Zero, [IntPtr]::Zero, 0) -ne 0) { return $null }
     
+    # Allocate unmanaged system memory buffer
     $hBuffer = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($BufferSize)
-    $whdr = New-Object NativeAudio.WAVEHDR
-    $whdr.lpData = $hBuffer
-    $whdr.dwBufferLength = $BufferSize
-    $whdr.dwFlags = 0
     
-    $WinMM::waveInPrepareHeader($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
-    $WinMM::waveInAddBuffer($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
-    
-    $WinMM::waveInStart($hWaveIn) | Out-Null
-    Start-Sleep -Milliseconds $DurationMs
-    $WinMM::waveInStop($hWaveIn) | Out-Null
-    
-    $managedBuffer = New-Object byte[] $BufferSize
-    [System.Runtime.InteropServices.Marshal]::Copy($hBuffer, $managedBuffer, 0, $BufferSize)
-    
-    $WinMM::waveInReset($hWaveIn) | Out-Null
-    $WinMM::waveInClose($hWaveIn) | Out-Null
-    [System.Runtime.InteropServices.Marshal]::FreeHGlobal($hBuffer)
-    
-    $samples = New-Object Int16[] ($BufferSize / 2)
-    [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
-    
-    $chunkSize = 22 
-    $profile = New-Object System.Collections.Generic.List[double]
-    for ($i = 0; $i -lt $samples.Length; $i += $chunkSize) {
-        $sum = 0
-        $count = 0
-        for ($j = $i; $j -lt ($i + $chunkSize) -and $j -lt $samples.Length; $j++) {
-            $sum += [Math]::Abs([double]$samples[$j])
-            $count++
+    try {
+        $whdr = New-Object NativeAudio.WAVEHDR
+        $whdr.lpData = $hBuffer
+        $whdr.dwBufferLength = $BufferSize
+        $whdr.dwFlags = 0
+        
+        $WinMM::waveInPrepareHeader($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
+        $WinMM::waveInAddBuffer($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
+        
+        $WinMM::waveInStart($hWaveIn) | Out-Null
+        Start-Sleep -Milliseconds $DurationMs
+        $WinMM::waveInStop($hWaveIn) | Out-Null
+        
+        $managedBuffer = New-Object byte[] $BufferSize
+        [System.Runtime.InteropServices.Marshal]::Copy($hBuffer, $managedBuffer, 0, $BufferSize)
+        
+        $WinMM::waveInReset($hWaveIn) | Out-Null
+        $WinMM::waveInClose($hWaveIn) | Out-Null
+        
+        $samples = New-Object Int16[] ($BufferSize / 2)
+        [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
+        
+        $chunkSize = 22 
+        $profile = New-Object System.Collections.Generic.List[double]
+        for ($i = 0; $i -lt $samples.Length; $i += $chunkSize) {
+            $sum = 0
+            $count = 0
+            for ($j = $i; $j -lt ($i + $chunkSize) -and $j -lt $samples.Length; $j++) {
+                $sum += [Math]::Abs([double]$samples[$j])
+                $count++
+            }
+            $profile.Add($sum / $count)
         }
-        $profile.Add($sum / $count)
+        
+        $magnitude = 0.0
+        foreach ($val in $profile) { $magnitude += $val * $val }
+        $magnitude = [Math]::Sqrt($magnitude)
+        
+        if ($magnitude -eq 0) { return $profile }
+        $normProfile = New-Object double[] $profile.Count
+        for ($i = 0; $i -lt $profile.Count; $i++) { $normProfile[$i] = $profile[$i] / $magnitude }
+        
+        return ,$normProfile
     }
-    
-    $magnitude = 0.0
-    foreach ($val in $profile) { $magnitude += $val * $val }
-    $magnitude = [Math]::Sqrt($magnitude)
-    
-    if ($magnitude -eq 0) { return $profile }
-    $normProfile = New-Object double[] $profile.Count
-    for ($i = 0; $i -lt $profile.Count; $i++) { $normProfile[$i] = $profile[$i] / $magnitude }
-    
-    return ,$normProfile
+    finally {
+        # This block ALWAYS runs, forcing Windows to release the RAM even if a crash happens
+        if ($hBuffer -ne [IntPtr]::Zero) {
+            [System.Runtime.InteropServices.Marshal]::FreeHGlobal($hBuffer)
+        }
+    }
 }
 
 function Listen-ForTap {
