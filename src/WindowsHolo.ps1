@@ -1,8 +1,3 @@
-# ==================================================================================
-# WINDOWS HOLO ENGINE (Universal Windows Port - Fixed Scope & Types)
-# ==================================================================================
-
-# --- CONFIGURATION ---
 $SampleRate = 44100
 $DurationMs = 150                               
 $BytesPerSample = 2                              
