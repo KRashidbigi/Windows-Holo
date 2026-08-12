@@ -28,7 +28,7 @@ function Trigger-Action([int]$zoneId) {
     }
 }
 
-# --- ROBUST C# AUDIO HELPER COMPILATION ---
+# --- COMPLETE MEMORY-SAFE NATIVE AUDIO BRIDGE ---
 if (-not ([System.Management.Automation.PSTypeName]'AudioHelper.WinMMBridge').Type) {
     Add-Type -TypeDefinition @'
 using System;
@@ -64,102 +64,114 @@ namespace AudioHelper
     public class WinMMBridge
     {
         [DllImport("winmm.dll", SetLastError = true)]
-        public static extern int waveInOpen(out IntPtr phwi, uint uDeviceID, ref WAVEFORMATEX pwfx, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
+        private static extern int waveInOpen(out IntPtr phwi, uint uDeviceID, ref WAVEFORMATEX pwfx, IntPtr dwCallback, IntPtr dwInstance, uint fdwOpen);
 
         [DllImport("winmm.dll", SetLastError = true)]
-        public static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+        private static extern int waveInPrepareHeader(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
 
         [DllImport("winmm.dll", SetLastError = true)]
-        public static extern int waveInAddBuffer(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
+        private static extern int waveInAddBuffer(IntPtr hwi, ref WAVEHDR pwh, uint cbwh);
 
         [DllImport("winmm.dll", SetLastError = true)]
-        public static extern int waveInStart(IntPtr hwi);
+        private static extern int waveInStart(IntPtr hwi);
 
         [DllImport("winmm.dll", SetLastError = true)]
-        public static extern int waveInStop(IntPtr hwi);
+        private static extern int waveInStop(IntPtr hwi);
 
         [DllImport("winmm.dll", SetLastError = true)]
-        public static extern int waveInReset(IntPtr hwi);
+        private static extern int waveInReset(IntPtr hwi);
 
         [DllImport("winmm.dll", SetLastError = true)]
-        public static extern int waveInClose(IntPtr hwi);
+        private static extern int waveInClose(IntPtr hwi);
+
+        // Safe wrapper to record a chunk of audio without exposing transient structs to the PowerShell GC
+        public static byte[] RecordAudioChunk(uint sampleRate, int durationMs, int bufferSize)
+        {
+            IntPtr hWaveIn = IntPtr.Zero;
+            WAVEFORMATEX wfx = new WAVEFORMATEX();
+            wfx.wFormatTag = 1; // PCM
+            wfx.nChannels = 1;
+            wfx.nSamplesPerSec = sampleRate;
+            wfx.wBitsPerSample = 16;
+            wfx.nBlockAlign = 2;
+            wfx.nAvgBytesPerSec = sampleRate * 2;
+            wfx.cbSize = 0;
+
+            if (waveInOpen(out hWaveIn, 0, ref wfx, IntPtr.Zero, IntPtr.Zero, 0) != 0)
+            {
+                return null;
+            }
+
+            IntPtr hBuffer = Marshal.AllocHGlobal(bufferSize);
+            byte[] managedBuffer = new byte[bufferSize];
+
+            try
+            {
+                WAVEHDR whdr = new WAVEHDR();
+                whdr.lpData = hBuffer;
+                whdr.dwBufferLength = (uint)bufferSize;
+                whdr.dwFlags = 0;
+
+                waveInPrepareHeader(hWaveIn, ref whdr, (uint)Marshal.SizeOf(whdr));
+                waveInAddBuffer(hWaveIn, ref whdr, (uint)Marshal.SizeOf(whdr));
+
+                waveInStart(hWaveIn);
+                System.Threading.Thread.Sleep(durationMs);
+                waveInStop(hWaveIn);
+
+                Marshal.Copy(hBuffer, managedBuffer, 0, bufferSize);
+            }
+            finally
+            {
+                waveInReset(hWaveIn);
+                waveInClose(hWaveIn);
+                if (hBuffer != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(hBuffer);
+                }
+            }
+
+            return managedBuffer;
+        }
     }
 }
 '@
 }
 
-# Initialize format struct via proper namespace
-$script:wfx = New-Object AudioHelper.WAVEFORMATEX
-$script:wfx.wFormatTag = 1 
-$script:wfx.nChannels = 1
-$script:wfx.nSamplesPerSec = $SampleRate
-$script:wfx.wBitsPerSample = 16
-$script:wfx.nBlockAlign = 2
-$script:wfx.nAvgBytesPerSec = $SampleRate * 2
-$script:wfx.cbSize = 0
-
 # --- AUDIO FEATURE EXTRACTION ---
 function Get-TapProfile {
-    $hWaveIn = [IntPtr]::Zero
-    $format = $script:wfx
-    
-    if ([AudioHelper.WinMMBridge]::waveInOpen([ref]$hWaveIn, 0, [ref]$format, [IntPtr]::Zero, [IntPtr]::Zero, 0) -ne 0) { 
+    # Call the crash-proof C# wrapper to get raw audio safely
+    $managedBuffer = [AudioHelper.WinMMBridge]::RecordAudioChunk($SampleRate, $DurationMs, $BufferSize)
+    if ($null -eq $managedBuffer) {
         Write-Error "Could not access native microphone device."
-        return $null 
+        return $null
     }
     
-    $hBuffer = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($BufferSize)
+    $samples = New-Object Int16[] ($BufferSize / 2)
+    [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
     
-    try {
-        $whdr = New-Object AudioHelper.WAVEHDR
-        $whdr.lpData = $hBuffer
-        $whdr.dwBufferLength = $BufferSize
-        $whdr.dwFlags = 0
-        
-        [AudioHelper.WinMMBridge]::waveInPrepareHeader($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
-        [AudioHelper.WinMMBridge]::waveInAddBuffer($hWaveIn, [ref]$whdr, [System.Runtime.InteropServices.Marshal]::SizeOf($whdr)) | Out-Null
-        
-        [AudioHelper.WinMMBridge]::waveInStart($hWaveIn) | Out-Null
-        Start-Sleep -Milliseconds $DurationMs
-        [AudioHelper.WinMMBridge]::waveInStop($hWaveIn) | Out-Null
-        
-        $managedBuffer = New-Object byte[] $BufferSize
-        [System.Runtime.InteropServices.Marshal]::Copy($hBuffer, $managedBuffer, 0, $BufferSize)
-        
-        [AudioHelper.WinMMBridge]::waveInReset($hWaveIn) | Out-Null
-        [AudioHelper.WinMMBridge]::waveInClose($hWaveIn) | Out-Null
-        
-        $samples = New-Object Int16[] ($BufferSize / 2)
-        [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
-        
-        $chunkSize = 22 
-        $profile = New-Object System.Collections.Generic.List[double]
-        for ($i = 0; $i -lt $samples.Length; $i += $chunkSize) {
-            $sum = 0
-            $count = 0
-            for ($j = $i; $j -lt ($i + $chunkSize) -and $j -lt $samples.Length; $j++) {
-                $val = $samples[$j]
-                if ($val -lt 0) { $sum -= $val } else { $sum += $val }
-                $count++
-            }
-            $profile.Add($sum / $count)
+    $chunkSize = 22 
+    $profile = New-Object System.Collections.Generic.List[double]
+    for ($i = 0; $i -lt $samples.Length; $i += $chunkSize) {
+        $sum = 0
+        $count = 0
+        for ($j = $i; $j -lt ($i + $chunkSize) -and $j -lt $samples.Length; $j++) {
+            $val = $samples[$j]
+            if ($val -lt 0) { $sum -= $val } else { $sum += $val }
+            $count++
         }
-        
-        $magnitude = 0.0
-        foreach ($val in $profile) { $magnitude += $val * $val }
-        $magnitude = [Math]::Sqrt($magnitude)
-        
-        if ($magnitude -eq 0) { return $profile }
-        $normProfile = New-Object double[] $profile.Count
-        for ($i = 0; $i -lt $profile.Count; $i++) { $normProfile[$i] = $profile[$i] / $magnitude }
-        
-        return ,$normProfile
+        $profile.Add($sum / $count)
     }
-    finally {
-        if ($hBuffer -ne [IntPtr]::Zero) {
-            [System.Runtime.InteropServices.Marshal]::FreeHGlobal($hBuffer)
-        }
-    }
+    
+    $magnitude = 0.0
+    foreach ($val in $profile) { $magnitude += $val * $val }
+    $magnitude = [Math]::Sqrt($magnitude)
+    
+    if ($magnitude -eq 0) { return $profile }
+    $normProfile = New-Object double[] $profile.Count
+    for ($i = 0; $i -lt $profile.Count; $i++) { $normProfile[$i] = $profile[$i] / $magnitude }
+    
+    return ,$normProfile
 }
 
 function Listen-ForTap {
