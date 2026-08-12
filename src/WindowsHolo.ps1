@@ -2,7 +2,10 @@ $SampleRate = 44100
 $DurationMs = 150                               
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-$Threshold = 1200                                
+# TUNED SENSITIVITY: Minimum energy floor required to even consider a sound a "tap"
+$EnergyThreshold = 0.05 
+# TUNED STRICTNESS: Lower = must match the calibration sound profile much more precisely
+$MatchStrictness = 0.20                        
 $NumCalibrationTaps = 5                         
 
 $Zones = @{
@@ -84,12 +87,11 @@ namespace AudioHelper
         [DllImport("winmm.dll", SetLastError = true)]
         private static extern int waveInClose(IntPtr hwi);
 
-        // Safe wrapper to record a chunk of audio without exposing transient structs to the PowerShell GC
         public static byte[] RecordAudioChunk(uint sampleRate, int durationMs, int bufferSize)
         {
             IntPtr hWaveIn = IntPtr.Zero;
             WAVEFORMATEX wfx = new WAVEFORMATEX();
-            wfx.wFormatTag = 1; // PCM
+            wfx.wFormatTag = 1;
             wfx.nChannels = 1;
             wfx.nSamplesPerSec = sampleRate;
             wfx.wBitsPerSample = 16;
@@ -140,12 +142,8 @@ namespace AudioHelper
 
 # --- AUDIO FEATURE EXTRACTION ---
 function Get-TapProfile {
-    # Call the crash-proof C# wrapper to get raw audio safely
     $managedBuffer = [AudioHelper.WinMMBridge]::RecordAudioChunk($SampleRate, $DurationMs, $BufferSize)
-    if ($null -eq $managedBuffer) {
-        Write-Error "Could not access native microphone device."
-        return $null
-    }
+    if ($null -eq $managedBuffer) { return $null }
     
     $samples = New-Object Int16[] ($BufferSize / 2)
     [Buffer]::BlockCopy($managedBuffer, 0, $samples, 0, $BufferSize)
@@ -177,11 +175,14 @@ function Get-TapProfile {
 function Listen-ForTap {
     while ($true) {
         $profile = Get-TapProfile
-        if ($null -eq $profile) { Start-Sleep -Milliseconds 500; continue }
+        if ($null -eq $profile) { Start-Sleep -Milliseconds 300; continue }
+        
         $maxEnergy = 0
         foreach ($val in $profile) { if ($val -gt $maxEnergy) { $maxEnergy = $val } }
-        if ($maxEnergy -gt 0.0) { return ,$profile }
-        Start-Sleep -Milliseconds 50
+        
+        # TUNED: Only accept the sample if peak energy clears our minimum noise floor
+        if ($maxEnergy -gt $EnergyThreshold) { return ,$profile }
+        Start-Sleep -Milliseconds 30
     }
 }
 
@@ -216,7 +217,7 @@ Write-Host "Tap your desk zones to interact. Press Ctrl+C to close script." -For
 
 while ($true) {
     $liveProfile = Listen-ForTap
-    if ($null -eq $liveProfile) { Start-Sleep -Milliseconds 500; continue }
+    if ($null -eq $liveProfile) { Start-Sleep -Milliseconds 300; continue }
     $bestZone = -1
     $minDistance = [double]::MaxValue
     
@@ -234,8 +235,10 @@ while ($true) {
         }
     }
     
-    if ($bestZone -ne -1 -and $minDistance -lt 0.8) { 
+    # TUNED: Distance must now be tightly constrained by $MatchStrictness
+    if ($bestZone -ne -1 -and $minDistance -lt $MatchStrictness) { 
         Trigger-Action $bestZone
+        Start-Sleep -Milliseconds 400 # Cooldown to prevent multi-triggering
     }
-    Start-Sleep -Milliseconds 600 
+    Start-Sleep -Milliseconds 100 
 }
