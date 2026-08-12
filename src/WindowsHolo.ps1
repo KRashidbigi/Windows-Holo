@@ -2,7 +2,7 @@ $SampleRate = 44100
 $DurationMs = 40                                # FASTER: Shorter slice to minimize blind spots
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
-$RawVolumeThreshold = 800                      
+$RawVolumeThreshold = 1500                      
 $DoubleTapWindowMs = 400                        # SLIGHTLY WIDER: Gives a bit more room for the second hit
                     
 
@@ -154,7 +154,7 @@ function Test-ImpactPeak {
 # --- EXECUTION ENGINE ---
 Clear-Host
 Write-Host "====================================================" -ForegroundColor Yellow
-Write-Host "       SURFACE PRO 11 APP LAUNCHER                  " -ForegroundColor Yellow
+Write-Host "                    APP LAUNCHER                    " -ForegroundColor Yellow
 Write-Host "====================================================" -ForegroundColor Yellow
 Write-Host " Gestures:" -ForegroundColor White
 Write-Host "   1 Strike  -> Open Microsoft Teams" -ForegroundColor Gray
