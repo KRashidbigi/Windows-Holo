@@ -24,7 +24,7 @@ $Zones = @{
 
 # --- ACTIONS CONFIGURATION ---
 function Trigger-Action([int]$zoneId) {
-    Write-Host "`n[💥 ACTION] Triggered action for Zone $zoneId: $($Zones[$zoneId])" -ForegroundColor Cyan
+    Write-Host "`n[💥 ACTION] Triggered action for Zone ${zoneId}: $($Zones[$zoneId])" -ForegroundColor Cyan
     $wsh = New-Object -ComObject WScript.Shell
     
     switch ($zoneId) {
