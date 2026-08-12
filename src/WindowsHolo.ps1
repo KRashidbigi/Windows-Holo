@@ -177,7 +177,7 @@ Write-Host "`nListening for impact...`n" -ForegroundColor DarkGray
 while ($true) {
     $initialPeak = Get-CurrentPeak
     if ($initialPeak -gt $RawVolumeThreshold) {
-        Write-Host "⚡ First impact ($initialPeak) registered... " -NoNewline -ForegroundColor Yellow
+        Write-Host "First impact registered... " -NoNewline -ForegroundColor Yellow
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $doubleStrike = $false
         
@@ -191,10 +191,10 @@ while ($true) {
         }
         
         if ($doubleStrike) {
-            Invoke-MappedAction "VSCode"
+            Invoke-MappedAction 'VSCode'
             Start-Sleep -Milliseconds 600
         } else {
-            Invoke-MappedAction "Teams"
+            Invoke-MappedAction 'Teams'
             Start-Sleep -Milliseconds 500
         }
     }
