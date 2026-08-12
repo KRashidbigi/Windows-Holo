@@ -2,6 +2,7 @@ $SampleRate = 44100
 $DurationMs = 40                                
 $BytesPerSample = 2                              
 $BufferSize = [int]($SampleRate * ($DurationMs / 1000) * $BytesPerSample)
+$RawVolumeThreshold = 1500                      
 $DoubleTapWindowMs = 400                        
 
 # --- LAUNCH ACTIONS ---
@@ -153,23 +154,8 @@ function Get-CurrentPeak {
 # --- EXECUTION ENGINE ---
 Clear-Host
 Write-Host '====================================================' -ForegroundColor Yellow
-Write-Host '       SURFACE PRO 11 SMART APP LAUNCHER            ' -ForegroundColor Yellow
+Write-Host '       SURFACE PRO 11 APP LAUNCHER                  ' -ForegroundColor Yellow
 Write-Host '====================================================' -ForegroundColor Yellow
-
-# DYNAMIC NOISE CALIBRATION
-Write-Host 'Calibrating ambient room noise. Keep desk still...' -ForegroundColor White
-$roomNoiseSamples = 50
-$maxNoiseSeen = 0
-
-for ($k = 1; $k -le $roomNoiseSamples; $k++) {
-    $peak = Get-CurrentPeak
-    if ($peak -gt $maxNoiseSeen) { $maxNoiseSeen = $peak }
-    Start-Sleep -Milliseconds 15
-}
-
-$RawVolumeThreshold = [Math]::Max(1200, [int]($maxNoiseSeen * 1.8))
-Write-Host 'Calibration complete!' -ForegroundColor Green
-
 Write-Host 'Gestures:' -ForegroundColor White
 Write-Host '  1 Strike  -> Open Microsoft Teams' -ForegroundColor Gray
 Write-Host '  2 Strikes -> Open Visual Studio Code' -ForegroundColor Gray
