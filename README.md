@@ -22,6 +22,9 @@ Because modern laptop manufacturers include heavy AI filtering to remove table n
 1. Open the Windows Start Menu, search for **Samsung Settings**, **HP Command Center**, or **Realtek Audio Console** (depending on your brand) and turn off **AI Noise Canceling** / **Vocal Isolation**.
 2. Alternatively, press `Win + R`, type `mmsys.cpl`, go to the **Recording** tab -> **Microphone Properties** -> **Advanced**, and uncheck **Enable audio enhancements**.
 
+## Note
+I used this with a Surface Pro 11 which has a sturdy kickstand and sound travels up well; on line 15 i have put my threshold at 1200 `$Threshold = 1200 ` If your laptop uses a standard plastic hinge, then audio won't travel up as well; you should set your threshold to about 600 - 800. Any lower and it will pick up basically any sound from any direction.
+
 ## Architectural Mapping: macOS vs. Windows Port
 
 | Feature Component | Original macOS Implementation (Swift) | This Universal Windows Port (PowerShell) |
